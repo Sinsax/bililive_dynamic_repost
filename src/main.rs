@@ -1,26 +1,39 @@
-use std::{thread::sleep, vec,path::Path,fs};
-use bpi_rs::{BilibiliRequest, BpiClient, BpiError, BpiResponse,
+use std::{thread::sleep,vec,path::Path,fs};
+use bpi_rs::{BilibiliRequest, BpiClient, BpiError, BpiResponse,auth::Account,
         dynamic::publish::{
             CreateComplexDynamicData, DynamicContent, DynamicContentItem, DynamicPic, DynamicRequest, DynamicTopic
         }};
 use serde_json::{Value, from_slice,json};
 use serde::Deserialize;
-
+use tracing_subscriber::{fmt, EnvFilter};
 
 // config.toml
 #[derive(Deserialize)]
 struct Config{
     mid:u64,
     repost_text:String,
+    dede_user_id: String,
+    dede_user_id_ckmd5: String,
+    sessdata: String,
+    bili_jct: String,
+    buvid3: String,
 }
 impl Config {
     fn new() -> Self {
         let default_toml = 
 r#"# 配置文件
-# 请填写需要监控的用户ID
-mid = 123456789
+# 请填写需要监控的用户UID,不是直播间ID
+mid = 327311724
+# 转发动态所需文本
 repost_text = "转发动态"
+# Cookie
+bili_jct = "your_bili_jct_here"
+dede_user_id = "your_dede_user_id_here"
+dede_user_id_ckmd5 = "your_dede_user_id_ckmd5_here"  
+sessdata = "your_sessdata_here"
+buvid3 = "your_buvid3_here"
 "#;
+
         // 获取config.toml内容到结构体
         let toml_path = Path::new("config.toml");
         let toml_content = match fs::read_to_string(toml_path) {
@@ -272,6 +285,7 @@ impl Repost for BpiClient {
             }
         }
     }
+
 }
 
 
@@ -279,6 +293,24 @@ impl Repost for BpiClient {
 async fn main() {
     // 初始化
     let bpi = BpiClient::new();
+    let config =Config::new();
+
+    // 初始化日志
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    fmt()
+        .with_env_filter(filter)
+        .with_ansi(std::env::var("NO_COLOR").is_err())
+        .init();
+
+    // 登录
+    bpi.set_account(Account{
+        dede_user_id: config.dede_user_id,
+        dede_user_id_ckmd5: config.dede_user_id_ckmd5,
+        sessdata: config.sessdata,
+        bili_jct: config.bili_jct,
+        buvid3: config.buvid3,
+    });
 
     let mut _staus = Poststatus::Wait;
     let mut livestatus = Livestatus{
@@ -296,7 +328,7 @@ async fn main() {
     
 
     // 用户空间id
-    let config =Config::new();
+
     let taget_user=bpi.user_card_info(config.mid, Some(false)).await;
     match taget_user {
         Ok(user_info) => {
@@ -309,7 +341,7 @@ async fn main() {
             panic!("请重新检查id是否正确");
         }
     }
-
+    tracing::info!("初始化完成");
     // 主循环
     loop {
         if fail >= 5{
@@ -327,7 +359,7 @@ async fn main() {
         // 执行操作
         match _staus {
             Poststatus::Wait=>{
-                let dur = std::time::Duration::from_secs(30);
+                let dur = std::time::Duration::from_secs(60);
                 tracing::info!("WAIT:等待{}秒后继续检测",dur.as_secs());
                 sleep(dur);
             }

@@ -9,5 +9,6 @@ serde = "1.0.228"
 serde_json = "1.0.145"
 tokio = "1.48.0"
 toml = "0.9.8"
-tracing = "0.1.43"
+tracing = { version = "0.1.43", features = ["max_level_info", "std"] }
 unescape = "0.1.0"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
