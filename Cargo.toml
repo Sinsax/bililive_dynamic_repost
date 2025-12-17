@@ -1,5 +1,5 @@
 [package]
-name = "live_dynamic_auto_post"
+name = "bililive_dynamic_repost"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,3 +12,5 @@ toml = "0.9.8"
 tracing = { version = "0.1.43", features = ["max_level_info", "std"] }
 unescape = "0.1.0"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2.4"
+chrono = "0.4.42"
