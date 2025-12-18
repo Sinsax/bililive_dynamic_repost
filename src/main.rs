@@ -1,206 +1,161 @@
-use std::{thread::sleep};
+use clap::{Parser};
+use tokio::fs;
+use std::{io,io::Write};
 use bpi_rs::{ BpiClient, auth::Account};
-use bililive_dynamic_repost::{config::{Config,Livestatus,Poststatus},work::{Repost, RoomInfo}};
-use tracing_subscriber::{EnvFilter,fmt};
+use bililive_dynamic_repost::{config::{Config},work::{Repost}};
+// use tracing_subscriber::{EnvFilter,fmt};
+#[derive(Debug,Parser)]
+#[command(version, about, long_about = None)]
+struct Cli{
+    /// 执行转发操作
+    #[arg(short = 'r',long = "repost", action = clap::ArgAction::SetTrue)]
+    repost: bool,
 
-#[derive(PartialEq)]
-enum LoginType{
-    Guest,
-    Logged
+    /// 执行删除操作
+    #[arg(short = 'd',long = "delete", action = clap::ArgAction::SetTrue)]
+    delete: bool,
 }
-struct LoginSet{
-    config_guest:Account,
-    config_login:Account,
-    login_type:LoginType
+enum Status {
+    Post,
+    DELETE,
 }
-impl LoginSet {
-    fn change(&mut self,logintype:LoginType)->Option<Account>{
-        if self.login_type != logintype{
-            self.login_type = logintype;
-
-            match self.login_type {
-                LoginType::Guest =>{
-                    Some(self.config_guest.clone())
-                }
-                LoginType::Logged =>{
-                    Some(self.config_login.clone())
-                }
-            }
-        }else {
-            None
-        }
-    }
-}
-
-#[tokio::main]
-async fn main() {
-    // 日志
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt()
-        .with_env_filter(filter)
-        .with_ansi(std::env::var("NO_COLOR").is_err())
-        .init();
-    
-    // 初始化
-    let bpi = BpiClient::new();
-    let config =Config::new("config.toml");
-    let account = Account{
-        dede_user_id: config.dede_user_id,
-        dede_user_id_ckmd5: config.dede_user_id_ckmd5,
-        sessdata: config.sessdata,
-        bili_jct: config.bili_jct,
-        buvid3: config.buvid3,
-    };
-    // empty account
-    let account_empty = Account{
-        dede_user_id: "".to_string(),
-        dede_user_id_ckmd5: "".to_string(),
-        sessdata: "".to_string(),
-        bili_jct: "".to_string(),
-        buvid3: "".to_string(),
-    };
-    let mut _staus = Poststatus::Wait4live;
-    let mut livestatus = Livestatus{
-        posted:false,
-        lived:false,
-        dynamic:false,
-    };
-    let mut src_dyn= String::new();
-    let mut repost_dyn= String::new();
-    let mut delete = false;
-    let mut fail = 0;
-    let mut room_info:RoomInfo;
-    let rnd_num = rand::random_range(60..120);
-    
-    // 游客登录
-    bpi.set_account(account_empty.clone());
-    // 登录器设置
-    let mut login_set:LoginSet = LoginSet{
-        config_guest:account_empty,
-        config_login:account,
-        login_type:LoginType::Guest,
-    };
-
-    // 获取roominfo
-    room_info = match bpi.live_info(config.roomid).await{
-        Ok(room_info)=>{
-            room_info
-        },
-        Err(e)=>{
-            panic!("请重新检查直播间id,错误:{}",e);
-        }
-    };
-
-    // 打印用户名称，防止弄错了
-    match bpi.user_card_info(room_info.uid, Some(false)).await{
-        Ok(user_info) => {
-            if let Some(data) = user_info.data {
-                tracing::info!("获取用户信息成功: 用户名: {}", data.card.name);
-            }
-        }
-        Err(e) => {
-            tracing::error!("获取用户信息失败: {:#?}", e);
-        }
-    }
-
-    tracing::info!("初始化完成");
-    // 主循环
+fn confirm() -> bool {
     loop {
-        if fail >= 5{
-            panic!("连续失败5次,程序终止");
+        // 打印提示并刷新输出（避免缓冲）
+        print!("(Y/N): ");
+        io::stdout().flush().unwrap();
+
+        // 读取用户输入
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+
+        // 处理输入（忽略空格/换行，不区分大小写）
+        let input = input.trim().to_lowercase();
+        match input.as_str() {
+            "y" | "yes" => return true,
+            "n" | "no" => return false,
+            _ => println!("无效输入！请输入 Y 或 N"),
         }
-
-        // 检查状态
-        _staus = livestatus.check();
-
-        // 执行操作
-        match _staus {
-            Poststatus::Wait4live =>{
-                if let Some(loginset) = login_set.change(LoginType::Guest) {
-                    bpi.set_account(loginset);
-                }   
-
-                // 获取直播信息
-                match bpi.live_info(config.roomid).await {
-                    Ok(roominfo)=>{
-                        room_info = roominfo
-                    }
-                    Err(e)=>{
-                        fail +=1;
-                        tracing::error!("请重新检查直播间id,错误:{}",e);
-                    }
-                } 
-
-                // 确定直播状态
-                if room_info.live_status == 1 {
-                    livestatus.lived =true;
-                    continue;
-                }else {
-                    livestatus.lived =false;
-                }
-
-                tracing::info!("WAIT:等待{}秒后继续检测直播状态",rnd_num);
-            }
-            Poststatus::Wait4dynamic=>{
-                if let Some(loginset) = login_set.change(LoginType::Logged) {
-                    bpi.set_account(loginset);
-                }
-
-                // 获取直播动态id
-                src_dyn = bpi.dyn_getid(&room_info.uid.to_string()).await;
-
-                if src_dyn.is_empty() {
-                    // 直播和动态时间差可能有10分钟左右
-                    tracing::info!("POST:等待{}秒后继续检测动态生成",rnd_num);
-
-                }else {
-                    // 检测到动态直接跳过睡眠进行post
-                    livestatus.dynamic=true;
-                    continue;
-                }
-            }
-            Poststatus::Post=>{
-                if let Some(loginset) = login_set.change(LoginType::Logged) {
-                    bpi.set_account(loginset);
-                }
-
-                tracing::info!("POST:开始转发动态:https://t.bilibili.com/{}",src_dyn);
-                match bpi.dyn_repost(&src_dyn,&config.repost_text).await {
-                    Ok(dyn_id) => {
-                        repost_dyn = dyn_id;
-                        livestatus.posted = true;
-                    }
-                    Err(_e) => {
-                        livestatus.posted = false;
-                        fail += 1;
-                    }
-                };
-            }
-            Poststatus::Delete=>{
-                if let Some(loginset) = login_set.change(LoginType::Logged) {
-                    bpi.set_account(loginset);
-                }
-
-                tracing::info!("DELETE:开始删除动态:{}",repost_dyn);
-                if repost_dyn.is_empty(){
-                    tracing::info!("动态ID为空,跳过删除");
-                }else {
-                    delete = bpi.dyn_delete(&repost_dyn).await;
-                }
-
-                if delete{
-                    livestatus.posted=false;
-                }else {
-                    fail += 1;
-                    tracing::error!("删除失败");
-                }
+    }
+}
+#[tokio::main]
+async fn main(){
+    let cli = Cli::parse();
+    let config =Config::new("config.toml");
+    let mut config:Config = match config {
+        Some(cfg)=>{cfg}
+        None=>{panic!()}
+    };
+    let op_status:Option<Status>= match (cli.repost, cli.delete) {
+        (true, false) => {
+            println!("将执行转发操作！");
+            if !config.repost_dynid.is_empty(){
+                println!("toml文件中repost_dynid不为空,请清除后再试");
+                None
+            }else {
+                Some(Status::Post)
             }
         }
-        
-        // sleep
-        let dur = std::time::Duration::from_secs(rnd_num);
-        sleep(dur);
+        (false, true) => {
+            println!("将执行删除操作！");
+            if config.repost_dynid.is_empty(){
+                println!("toml文件中repost_dynid为空,请执行过转发或手动配置后再试");
+                None
+            }else {
+                Some(Status::DELETE)
+            }  
+        }
+        _ =>{
+            panic!("错误：未指定有效操作（请用 -r/--repost 或 -d/--delete");
+        }
+    };
+    if let Some(status) = op_status{
+        let bpi = BpiClient::new();
+        let account = Account{
+            dede_user_id: config.dede_user_id.clone(),
+            dede_user_id_ckmd5: config.dede_user_id_ckmd5.clone(),
+            sessdata: config.sessdata.clone(),
+            bili_jct: config.bili_jct.clone(),
+            buvid3: config.buvid3.clone(),
+        };
+        bpi.set_account(account);
+        // 获取roominfo
+        if let Ok(room_info) = bpi.live_info(config.roomid).await{
+            // 打印用户名称，防止弄错了
+            match bpi.user_card_info(room_info.uid, Some(false)).await{
+                Ok(user_info) => {
+                    if let Some(data) = user_info.data {
+                        tracing::info!("获取用户信息成功: 用户名: {}", data.card.name);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("获取用户信息失败: {:#?}", e);
+                }
+            }
+            match status {
+                Status::Post=>{
+                    if room_info.live_status !=1{
+                        tracing::error!("POST:用户没有开播!");
+                    }else {
+                        let src_dyn = bpi.dyn_getid(&room_info.uid.to_string()).await;
 
+                        if src_dyn.is_empty() {
+                            // 直播和动态时间差可能有10分钟左右
+                            tracing::error!("POST:请等待动态生成");
+                        }else {
+                            tracing::info!("POST:开始转发动态:https://t.bilibili.com/{}",src_dyn);
+                            match bpi.dyn_repost(&src_dyn,&config.repost_text).await {
+                                Ok(repost_dynid) => {
+                                    tracing::info!("POST:动态转发成功");
+                                    config.repost_dynid =repost_dynid;
+
+                                    if let Ok(toml_str) = toml::to_string(&config){
+                                        match fs::write("config.toml", toml_str).await {
+                                            Ok(_)=>{
+                                                tracing::info!("POST:已保存动态id到toml中,后续可以使用--delete对动态进行删除");
+                                            }
+                                            Err(e)=>{
+                                                tracing::error!("POST:保存转发动态id失败,错误: {:#?}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("POST:动态转发失败,错误:{}",e);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Status::DELETE=>{
+                if room_info.live_status ==1{
+                    tracing::info!("DELETE:用户还没有下播,是否执行删除操作");
+                }
+                
+                if confirm(){
+                    tracing::info!("DELETE:开始删除动态:{}",config.repost_dynid);
+                    if bpi.dyn_delete(&config.repost_dynid).await{
+                        tracing::info!("DELETE:动态删除成功");
+                    }else {
+                        tracing::error!("DELETE:动态删除失败");
+                    }
+                    config.repost_dynid =String::new();
+                    if let Ok(toml_str) = toml::to_string(&config){
+                        match fs::write("config.toml", toml_str).await {
+                            Ok(_)=>{
+                                tracing::info!("DELETE:已清除toml中的动态id");
+                            }
+                            Err(e)=>{
+                                tracing::error!("DELETE:清除toml中的动态id失败,错误: {:#?}", e);
+                            }
+                        }
+                    }
+                }else {
+                    tracing::info!("DELETE:中止删除动态:{}",config.repost_dynid);
+                }
+                }
+            }
+        }
     }
 }

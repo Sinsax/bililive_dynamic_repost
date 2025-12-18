@@ -3,6 +3,7 @@
 roomid = 26320007
 # 转发动态所需文本
 repost_text = "转发动态"
+repost_dynid = ""
 # Cookie
 bili_jct = "your_bili_jct_here"
 dede_user_id = "your_dede_user_id_here"

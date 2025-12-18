@@ -1,12 +1,13 @@
 pub mod config {
 use std::{path::Path,fs};
-use serde::Deserialize;
+use serde::{Deserialize,Serialize};
 
     // config.toml
-    #[derive(Deserialize)]
+    #[derive(Deserialize,Serialize)]
     pub struct Config{
         pub roomid:i64,
         pub repost_text:String,
+        pub repost_dynid:String,
         pub dede_user_id: String,
         pub dede_user_id_ckmd5: String,
         pub sessdata: String,
@@ -14,13 +15,14 @@ use serde::Deserialize;
         pub buvid3: String,
     }
     impl Config {
-        pub fn new(config_name: &str) -> Self {
+        pub fn new(config_name: &str) -> Option<Self> {
             let default_toml = 
 r#"# 配置文件
 # 直播间ID
 roomid = 26320007
 # 转发动态所需文本
 repost_text = "转发动态"
+repost_dynid = ""
 # Cookie
 bili_jct = "your_bili_jct_here"
 dede_user_id = "your_dede_user_id_here"
@@ -31,30 +33,33 @@ buvid3 = "your_buvid3_here"
 
             // 获取config.toml内容到结构体
             let toml_path = Path::new(config_name);
-            let toml_content = match fs::read_to_string(toml_path) {
-                Ok(content) => content,
+            let toml_content:Option<String> = match fs::read_to_string(toml_path) {
+                Ok(content) => Some(content),
                 Err(e) => {
                     tracing::error!("读取{}失败: {:#?}", config_name, e);
                     // 重新生成config.toml
                     fs::write(toml_path, default_toml).expect(format!("无法创建{}", config_name).as_str());
-                    panic!("已重新生成{}于当前目录下", config_name);
+                    None
                 }
             };
-
+            match toml_content {
+                Some(toml_content)=>{
+                    let config: Option<Config> = match toml::from_str(&toml_content) {
+                        Ok(cfg) => Some(cfg),
+                        Err(e) => {
+                            tracing::error!("解析{}失败: {:#?}", config_name, e);
+                            // 删除错误的config.toml
+                            fs::remove_file(toml_path).expect("无法删除错误的config.toml");
+                            // 重新生成config.toml
+                            fs::write(toml_path, default_toml).expect(format!("无法创建{}", config_name).as_str());
+                            None
+                        }
+                    };
+                    config
+                }
+                None=>{None}
+            } 
             // 2. 反序列化为结构体（核心步骤）
-            let config: Config = match toml::from_str(&toml_content) {
-                Ok(cfg) => cfg,
-                Err(e) => {
-                    tracing::error!("解析{}失败: {:#?}", config_name, e);
-                    // 删除错误的config.toml
-                    fs::remove_file(toml_path).expect("无法删除错误的config.toml");
-                    // 重新生成config.toml
-                    fs::write(toml_path, default_toml).expect(format!("无法创建{}", config_name).as_str());
-                    panic!("已重新生成{}于当前目录下", config_name);
-                }
-            };
-
-            config
         }
     }
     
