@@ -1,7 +1,7 @@
-use std::{any::Any, f32::consts::E, fs, path::Path, thread::sleep};
-use bpi_rs::{ BpiClient, auth::Account, fav, login::member_center::account};
-use tracing_subscriber::{fmt, EnvFilter};
+use std::{thread::sleep};
+use bpi_rs::{ BpiClient, auth::Account};
 use bililive_dynamic_repost::{config::{Config,Livestatus,Poststatus},work::{Repost, RoomInfo}};
+use tracing_subscriber::{EnvFilter,fmt};
 
 #[derive(PartialEq)]
 enum LoginType{
@@ -34,27 +34,13 @@ impl LoginSet {
 
 #[tokio::main]
 async fn main() {
-    // // 日志
-    // let dir = "logs";
-    // if !Path::new(dir).exists() {
-    //     fs::create_dir_all(dir).expect("无法创建日志目录");
-    // } 
-    // let log_path = format!("log_{}.log", chrono::Utc::now().format("%Y-%m-%d-%H-%M-%S"));
-    // let log_path = Path::new(dir).join(log_path);
-    // let file = fs::OpenOptions::new()
-    //     .create(true)
-    //     .append(true)
-    //     .open(log_path)
-    //     .expect("无法创建或打开日志文件");
-    // // let combined_writer = file_writer.and(io::stdout());
-    // let filter = EnvFilter::try_from_default_env()
-    //     .unwrap_or_else(|_| EnvFilter::new("info"));
-    // fmt()
-    //     .with_env_filter(filter)
-    //     .with_ansi(false)
-    //     .with_writer(file)
-    //     .compact()
-    //     .init();
+    // 日志
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    fmt()
+        .with_env_filter(filter)
+        .with_ansi(std::env::var("NO_COLOR").is_err())
+        .init();
     
     // 初始化
     let bpi = BpiClient::new();
