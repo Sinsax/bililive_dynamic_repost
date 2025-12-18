@@ -5,7 +5,7 @@ use serde::Deserialize;
     // config.toml
     #[derive(Deserialize)]
     pub struct Config{
-        pub mid:u64,
+        pub roomid:i64,
         pub repost_text:String,
         pub dede_user_id: String,
         pub dede_user_id_ckmd5: String,
@@ -17,8 +17,8 @@ use serde::Deserialize;
         pub fn new(config_name: &str) -> Self {
             let default_toml = 
 r#"# 配置文件
-# 请填写需要监控的用户UID,不是直播间ID
-mid = 327311724
+# 直播间ID
+roomid = 26320007
 # 转发动态所需文本
 repost_text = "转发动态"
 # Cookie
@@ -57,16 +57,19 @@ buvid3 = "your_buvid3_here"
             config
         }
     }
-
+    
+    #[derive(PartialEq)]
     pub enum Poststatus {
         Post,
-        Wait,
+        Wait4live,
+        Wait4dynamic,
         Delete
     }
 
     pub struct Livestatus {
         pub posted:bool,
         pub lived:bool,
+        pub dynamic:bool,
     }
 
     impl Livestatus {
@@ -81,16 +84,16 @@ buvid3 = "your_buvid3_here"
         //     sleep
         // 确定运行状态
         pub fn check(&self) ->Poststatus{
-            if self.lived == self.posted{
-                return Poststatus::Wait;
-            }
-            if self.lived && !self.posted{
-                return Poststatus::Post;
-            }
-            if !self.lived && self.posted{
-                return Poststatus::Delete;
-            }
-            Poststatus::Wait
+            // if self.lived == self.posted{
+            //     return Poststatus::Wait;
+            // }
+            // if self.lived && !self.posted{
+            //     return Poststatus::Post;
+            // }
+            // if !self.lived && self.posted{
+            //     return Poststatus::Delete;
+            // }
+            // Poststatus::Wait
 
             // match self.lived {
             //     true => {
@@ -109,19 +112,36 @@ buvid3 = "your_buvid3_here"
             //     }
             // }
 
-            // if self.lived{
-            //     if self.posted{
-            //         Poststatus::Wait
-            //     }else {
-            //         Poststatus::Post
-            //     }
-            // }else {
-            //     if self.posted{
-            //         Poststatus::Delete
-            //     }else {
-            //         Poststatus::Wait
-            //     }
-            // }
+            if self.lived{
+                if self.dynamic{
+                    if self.posted{
+                        Poststatus::Wait4live
+                    }else {
+                        Poststatus::Post
+                    }
+                }else {
+                    Poststatus::Wait4dynamic
+                }
+            }else {
+                if self.posted{
+                    Poststatus::Delete
+                }else {
+                    Poststatus::Wait4live
+                }
+            }
+            // live dynamic post
+            // true true true
+            // Wait notlive
+            // true true false
+            // Post 
+            // true false false
+            // Wait dynamic
+            // false false false
+            // Wait live
+            // false true true 
+            // x Delete
+            // false false true
+            // Delete
         }
     }
 
@@ -133,8 +153,24 @@ use bpi_rs::{BilibiliRequest, BpiClient, BpiError, BpiResponse,
             CreateComplexDynamicData, DynamicContent, DynamicContentItem, DynamicPic, DynamicRequest, DynamicTopic
         }, };
 use serde_json::{Value, from_slice,json};
+use serde::Deserialize;
 
-
+#[derive(Debug, Deserialize)]
+pub struct RoomInfo {
+    pub uid: u64,
+    pub room_id: i64,
+    pub live_status: i32,
+}
+#[derive(Debug, Deserialize)]
+struct RoomResponse {
+    data: RoomData, // 嵌套的 data 字段
+}
+#[derive(Debug, Deserialize)]
+struct RoomData {
+    uid: u64,
+    room_id: i64,
+    live_status: i32,
+}
 pub trait Repost {
     #[allow(async_fn_in_trait)]
     async fn dynamic_repost(
@@ -153,7 +189,8 @@ pub trait Repost {
     async fn dyn_repost(&self,src_dyn:&str,repost_text:&str)->Result<String,BpiError>;
     #[allow(async_fn_in_trait)]
     async fn check_cookie(&self)->bool;
-
+    #[allow(async_fn_in_trait)]
+    async fn live_info(&self,room_id: i64) -> Result<RoomInfo, BpiError>;
 }
 impl Repost for BpiClient {
     async fn dynamic_repost(
@@ -298,6 +335,36 @@ impl Repost for BpiClient {
         }
     }
 
-}
+    async fn live_info(
+        &self,
+        room_id: i64
+    ) -> Result<RoomInfo, BpiError> {
+
+        let params = [("room_id", room_id.to_string())];
+
+        let resp = self
+            .get("https://api.live.bilibili.com/room/v1/Room/get_info")
+            .query(&params);
+        let result = match resp.send_request("").await {
+            Ok(data) => {
+                data
+            }
+            Err(e) => { 
+                tracing::error!("{:#?}", e);
+                return Err(e);
+            }
+        };
+        // let live_info:Value = from_slice(&result).unwrap();
+
+        let response: RoomResponse = serde_json::from_slice(&result).unwrap();
     
+        // 2. 转换为目标 RoomInfo 结构体
+        let room_info = RoomInfo {
+            uid: response.data.uid,
+            room_id: response.data.room_id,
+            live_status: response.data.live_status,
+        };
+        Ok(room_info)
+    }
+}
 }
