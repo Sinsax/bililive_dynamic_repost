@@ -2,21 +2,21 @@ pub mod config {
 use std::{path::Path,fs};
 use serde::{Deserialize,Serialize};
 
-    // config.toml
-    #[derive(Deserialize,Serialize)]
-    pub struct Config{
-        pub roomid:i64,
-        pub repost_text:String,
-        pub repost_dynid:String,
-        pub dede_user_id: String,
-        pub dede_user_id_ckmd5: String,
-        pub sessdata: String,
-        pub bili_jct: String,
-        pub buvid3: String,
-    }
-    impl Config {
-        pub fn new(config_name: &str) -> Option<Self> {
-            let default_toml = 
+// config.toml
+#[derive(Deserialize,Serialize)]
+pub struct Config{
+    pub roomid:i64,
+    pub repost_text:String,
+    pub repost_dynid:String,
+    pub dede_user_id: String,
+    pub dede_user_id_ckmd5: String,
+    pub sessdata: String,
+    pub bili_jct: String,
+    pub buvid3: String,
+}
+impl Config {
+    pub fn new(config_filename: &str) -> Option<Self> {
+        let default_toml = 
 r#"# 配置文件
 # 直播间ID
 roomid = 26320007
@@ -31,126 +31,38 @@ sessdata = "your_sessdata_here"
 buvid3 = "your_buvid3_here"
 "#;
 
-            // 获取config.toml内容到结构体
-            let toml_path = Path::new(config_name);
-            let toml_content:Option<String> = match fs::read_to_string(toml_path) {
-                Ok(content) => Some(content),
-                Err(e) => {
-                    tracing::error!("读取{}失败: {:#?}", config_name, e);
-                    // 重新生成config.toml
-                    fs::write(toml_path, default_toml).expect(format!("无法创建{}", config_name).as_str());
-                    None
-                }
-            };
-            match toml_content {
-                Some(toml_content)=>{
-                    let config: Option<Config> = match toml::from_str(&toml_content) {
-                        Ok(cfg) => Some(cfg),
-                        Err(e) => {
-                            tracing::error!("解析{}失败: {:#?}", config_name, e);
-                            // 删除错误的config.toml
-                            fs::remove_file(toml_path).expect("无法删除错误的config.toml");
-                            // 重新生成config.toml
-                            fs::write(toml_path, default_toml).expect(format!("无法创建{}", config_name).as_str());
-                            None
-                        }
-                    };
-                    config
-                }
-                None=>{None}
-            } 
-            // 2. 反序列化为结构体（核心步骤）
-        }
-    }
-    
-    #[derive(PartialEq)]
-    pub enum Poststatus {
-        Post,
-        Wait4live,
-        Wait4dynamic,
-        Delete
-    }
-
-    pub struct Livestatus {
-        pub posted:bool,
-        pub lived:bool,
-        pub dynamic:bool,
-    }
-
-    impl Livestatus {
-        // live post
-        // true true
-        //     sleep
-        // true false
-        //     post
-        // false true
-        //     del
-        // false false
-        //     sleep
-        // 确定运行状态
-        pub fn check(&self) ->Poststatus{
-            // if self.lived == self.posted{
-            //     return Poststatus::Wait;
-            // }
-            // if self.lived && !self.posted{
-            //     return Poststatus::Post;
-            // }
-            // if !self.lived && self.posted{
-            //     return Poststatus::Delete;
-            // }
-            // Poststatus::Wait
-
-            // match self.lived {
-            //     true => {
-            //         if self.posted{
-            //             Poststatus::Wait
-            //         }else {
-            //             Poststatus::Post
-            //         }
-            //     }
-            //     false => {
-            //         if self.posted{
-            //             Poststatus::Delete
-            //         }else {
-            //             Poststatus::Wait
-            //         }
-            //     }
-            // }
-
-            if self.lived{
-                if self.dynamic{
-                    if self.posted{
-                        Poststatus::Wait4live
-                    }else {
-                        Poststatus::Post
-                    }
-                }else {
-                    Poststatus::Wait4dynamic
-                }
-            }else {
-                if self.posted{
-                    Poststatus::Delete
-                }else {
-                    Poststatus::Wait4live
-                }
+        // 获取config.toml内容到结构体
+        let toml_path = Path::new(config_filename);
+        let toml_content:Option<String> = match fs::read_to_string(toml_path) {
+            Ok(content) => Some(content),
+            Err(e) => {
+                tracing::error!("读取{}失败: {:#?}", config_filename, e);
+                // 重新生成config.toml
+                fs::write(toml_path, default_toml).expect(format!("无法创建{}", config_filename).as_str());
+                None
             }
-            // live dynamic post
-            // true true true
-            // Wait notlive
-            // true true false
-            // Post 
-            // true false false
-            // Wait dynamic
-            // false false false
-            // Wait live
-            // false true true 
-            // x Delete
-            // false false true
-            // Delete
-        }
+        };
+        match toml_content {
+            Some(toml_content)=>{
+                let config: Option<Config> = match toml::from_str(&toml_content) {
+                    Ok(cfg) => Some(cfg),
+                    Err(e) => {
+                        tracing::error!("解析{}失败: {:#?}", config_filename, e);
+                        // 删除错误的config.toml
+                        fs::remove_file(toml_path).expect("无法删除错误的config.toml");
+                        // 重新生成config.toml
+                        fs::write(toml_path, default_toml).expect(format!("无法创建{}", config_filename).as_str());
+                        None
+                    }
+                };
+                config
+            }
+            None=>{None}
+        } 
     }
-
 }
+}
+
 pub mod work{
 use std::vec;
 use bpi_rs::{BilibiliRequest, BpiClient, BpiError, BpiResponse,
@@ -308,7 +220,7 @@ impl Repost for BpiClient {
         let repost_dyn = match result {
             Ok(resp) => {
                 if let Some(data) = resp.data {
-                    tracing::info!("转发成功,https://t.bilibili.com/{:?}", data.dyn_id_str);
+                    tracing::info!("转发成功,https://t.bilibili.com/{}", data.dyn_id_str);
                     Ok(data.dyn_id_str)
                 }else {
                     tracing::info!("转发成功,但是获取转发后的id失败,可能需要手动管理动态");

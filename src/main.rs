@@ -2,7 +2,7 @@ use clap::{Parser};
 use tokio::fs;
 use std::{io,io::Write};
 use bpi_rs::{ BpiClient, auth::Account};
-use bililive_dynamic_repost::{config::{Config},work::{Repost}};
+use bililive_dynamic_repost::{config::{Config},work::Repost};
 // use tracing_subscriber::{EnvFilter,fmt};
 #[derive(Debug,Parser)]
 #[command(version, about, long_about = None)]
@@ -41,36 +41,41 @@ fn confirm() -> bool {
 #[tokio::main]
 async fn main(){
     let cli = Cli::parse();
-    let config =Config::new("config.toml");
-    let mut config:Config = match config {
+    let op_config = Config::new("config.toml");
+    let mut config =match op_config {
         Some(cfg)=>{cfg}
         None=>{panic!()}
     };
-    let op_status:Option<Status>= match (cli.repost, cli.delete) {
-        (true, false) => {
-            println!("将执行转发操作！");
-            if !config.repost_dynid.is_empty(){
-                println!("toml文件中repost_dynid不为空,请清除后再试");
+    let op_status =  {
+        match (cli.repost, cli.delete) {
+            (true, false) => {
+                if !&config.repost_dynid.is_empty(){
+                    println!("toml文件中repost_dynid不为空,请清除后再试");
+                    None
+                }else {
+                    println!("将执行转发操作！");
+                    Some(Status::Post)
+                }
+            }
+            (false, true) => {
+                if (&config.repost_dynid).is_empty(){
+                    println!("toml文件中repost_dynid为空,请执行过转发或手动配置后再试");
+                    None
+                }else {
+                    println!("将执行删除操作！");
+                    Some(Status::DELETE)
+                }  
+            }
+            _ =>{
+                println!("错误：未指定有效操作（请用 -r/--repost 或 -d/--delete");
                 None
-            }else {
-                Some(Status::Post)
             }
         }
-        (false, true) => {
-            println!("将执行删除操作！");
-            if config.repost_dynid.is_empty(){
-                println!("toml文件中repost_dynid为空,请执行过转发或手动配置后再试");
-                None
-            }else {
-                Some(Status::DELETE)
-            }  
-        }
-        _ =>{
-            panic!("错误：未指定有效操作（请用 -r/--repost 或 -d/--delete");
-        }
     };
+
     if let Some(status) = op_status{
         let bpi = BpiClient::new();
+
         let account = Account{
             dede_user_id: config.dede_user_id.clone(),
             dede_user_id_ckmd5: config.dede_user_id_ckmd5.clone(),
@@ -78,61 +83,66 @@ async fn main(){
             bili_jct: config.bili_jct.clone(),
             buvid3: config.buvid3.clone(),
         };
+        // 登录
         bpi.set_account(account);
-        // 获取roominfo
-        if let Ok(room_info) = bpi.live_info(config.roomid).await{
-            // 打印用户名称，防止弄错了
-            match bpi.user_card_info(room_info.uid, Some(false)).await{
-                Ok(user_info) => {
-                    if let Some(data) = user_info.data {
-                        tracing::info!("获取用户信息成功: 用户名: {}", data.card.name);
+
+        // 获取用户信息
+        let room_info = if let Ok(room_info) = bpi.live_info(config.roomid).await{
+            match bpi.user_card_info(room_info.uid, Some(false)).await {
+                Ok(some_userinfo)=>{
+                    if let Some(user_info) = some_userinfo.data{
+                        tracing::info!("获取用户信息成功: 用户名: {}", user_info.card.name);
                     }
+                    Some(room_info)
                 }
-                Err(e) => {
+                Err(e)=>{
                     tracing::error!("获取用户信息失败: {:#?}", e);
+                    None
                 }
             }
-            match status {
-                Status::Post=>{
-                    if room_info.live_status !=1{
-                        tracing::error!("POST:用户没有开播!");
+        }else { None };
+
+        if let Some(room_info) = room_info { match status {
+            Status::Post=>{
+                if room_info.live_status ==1{
+                    let src_dyn = bpi.dyn_getid(&room_info.uid.to_string()).await;
+
+                    if src_dyn.is_empty() {
+                        // 直播和动态时间差可能有10分钟左右
+                        tracing::error!("POST:请等待动态生成");
                     }else {
-                        let src_dyn = bpi.dyn_getid(&room_info.uid.to_string()).await;
+                        tracing::info!("POST:开始转发动态:https://t.bilibili.com/{}",src_dyn);
+                        match bpi.dyn_repost(&src_dyn,&config.repost_text).await {
+                            Ok(repost_dynid) => {
+                                tracing::info!("POST:动态转发成功");
+                                config.repost_dynid =repost_dynid;
 
-                        if src_dyn.is_empty() {
-                            // 直播和动态时间差可能有10分钟左右
-                            tracing::error!("POST:请等待动态生成");
-                        }else {
-                            tracing::info!("POST:开始转发动态:https://t.bilibili.com/{}",src_dyn);
-                            match bpi.dyn_repost(&src_dyn,&config.repost_text).await {
-                                Ok(repost_dynid) => {
-                                    tracing::info!("POST:动态转发成功");
-                                    config.repost_dynid =repost_dynid;
-
-                                    if let Ok(toml_str) = toml::to_string(&config){
-                                        match fs::write("config.toml", toml_str).await {
-                                            Ok(_)=>{
-                                                tracing::info!("POST:已保存动态id到toml中,后续可以使用--delete对动态进行删除");
-                                            }
-                                            Err(e)=>{
-                                                tracing::error!("POST:保存转发动态id失败,错误: {:#?}", e);
-                                            }
+                                if let Ok(toml_str) = toml::to_string(&config){
+                                    match fs::write("config.toml", toml_str).await {
+                                        Ok(_)=>{
+                                            tracing::info!("POST:已保存动态id到toml中,后续可以使用--delete对动态进行删除");
+                                        }
+                                        Err(e)=>{
+                                            tracing::error!("POST:保存转发动态id失败,错误: {:#?}", e);
                                         }
                                     }
                                 }
-                                Err(e) => {
-                                    tracing::error!("POST:动态转发失败,错误:{}",e);
-                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("POST:动态转发失败,错误:{}",e);
                             }
                         }
                     }
+                }else {
+                    tracing::error!("POST:用户没有开播!");
                 }
-                
-                Status::DELETE=>{
+            }
+
+            Status::DELETE=>{
                 if room_info.live_status ==1{
                     tracing::info!("DELETE:用户还没有下播,是否执行删除操作");
                 }
-                
+
                 if confirm(){
                     tracing::info!("DELETE:开始删除动态:{}",config.repost_dynid);
                     if bpi.dyn_delete(&config.repost_dynid).await{
@@ -154,7 +164,7 @@ async fn main(){
                 }else {
                     tracing::info!("DELETE:中止删除动态:{}",config.repost_dynid);
                 }
-                }
+            }
             }
         }
     }
