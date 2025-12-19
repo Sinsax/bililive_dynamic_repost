@@ -1,42 +1,63 @@
 # bililive_dynamic_repos
 
 ## 📖 介绍
-
-bililive_dynamic_repos 动态转发是一个用 Rust 编写的自动化工具，用于实时监听 B 站直播动态并自动转发到动态。
+bililive_dynamic_repos（B站直播动态转发工具）是一款基于 Rust 开发的cli工具，能够指定 B 站用户的直播动态，完成动态转发操作。
 
 ## 🚀 使用方式
 
 ### 前置要求
-- Rust 1.90+ (安装：https://www.rust-lang.org/zh-CN/tools/install)
-- 有效的 B 站账号
+- Rust 1.90 及以上版本（安装教程：https://www.rust-lang.org/zh-CN/tools/install）
+- 有效的 B 站账号（需获取对应 Cookie 信息）
 
-### 安装
-
+### 安装步骤
 ```bash
+# 克隆代码仓库
 git clone https://github.com/your-repo/bililive_dynamic_repost.git
 cd bililive_dynamic_repost
+
+# 配置账号信息
+# 编辑 config.toml 文件，填入你的 B 站 Cookie 和需要监听的目标用户直播间的 UID
 ```
 
-### 配置
+### 命令行操作（CLI）
+本工具使用 `clap` 管理命令行交互，支持以下核心操作：
 
-1. 编辑 `config.toml`
-填入所需的cookie和需要转发直播用户的uid
-
-### 构建
-
+#### 转发指定用户直播动态
 ```bash
+# 简写形式
+cargo run -- -r
+# 完整形式
+cargo run -- --repost
+```
+
+#### 删除指定用户相关转发动态
+```bash
+# 简写形式
+cargo run -- -d
+# 完整形式
+cargo run -- --delete
+```
+
+### 配置说明
+1. 找到项目根目录下的 `config.toml` 文件并编辑；
+2. 按文件内注释提示，填入你的 B 站账号 Cookie 信息，以及需要监听并转发直播动态的用户 UID 列表。
+
+### 构建编译
+```bash
+# 编译发布版本（性能最优）
 cargo build --release
 ```
 
-### 运行
-
+### 运行工具
 ```bash
-cargo run --release
-# 或直接运行编译后的二进制文件
-./target/release/bililive_dynamic_repost
+# 或运行编译后的二进制文件（推荐）
+./target/release/bililive_dynamic_repost -r
+./target/release/bililive_dynamic_repost --repost
+./target/release/bililive_dynamic_repost -d
+./target/release/bililive_dynamic_repost --delete
 ```
 
 ## ⚠️ 注意事项
-
-- ⛔ **禁止在公共仓库提交 `config.toml`**，添加到 `.gitignore`
-- 📊 不要频繁请求同一 UID 的动态（建议间隔 > 30 秒）
+- ⛔ 严禁将包含敏感信息的 `config.toml` 文件提交至公共代码仓库，务必将该文件添加到 `.gitignore` 中；
+- 📊 避免对同一 UID 进行高频次动态请求，建议请求间隔大于 30 秒；
+- 🚨 请遵守 B 站平台使用规范，切勿滥用本工具进行违规操作。
