@@ -3,7 +3,7 @@ use tokio::fs;
 use std::{io,io::Write};
 use bpi_rs::{ BpiClient, auth::Account};
 use bililive_dynamic_repost::{config::{Config},work::Repost};
-// use tracing_subscriber::{EnvFilter,fmt};
+use tracing_subscriber::{EnvFilter,fmt};
 #[derive(Debug,Parser)]
 #[command(version, about, long_about = None)]
 struct Cli{
@@ -40,6 +40,14 @@ fn confirm() -> bool {
 }
 #[tokio::main]
 async fn main(){
+    // 日志
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    fmt()
+        .with_env_filter(filter)
+        .with_ansi(std::env::var("NO_COLOR").is_err())
+        .init();
+
     let cli = Cli::parse();
     let op_config = Config::new("config.toml");
     let mut config =match op_config {
